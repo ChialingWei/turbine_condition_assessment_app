@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Upload and Point Selection</title>
+    <style>
+        #previewImage {
+            position: absolute;
+            top: 150px;
+            left: 150px;
+        }
+        #imageCanvas {
+            position: absolute;
+            top: 150px;
+            left: 150px;
+            z-index: 3;
+        }
+        #croppedImage {
+            position: absolute;
+            top: 150px;
+            left: 150px;
+            width: 100%; /* Ensure the image doesn't exceed its original width */
+            height: auto;
+        }
+        #transImage {
+            position: absolute;
+            top: 150px;
+            left: 150px;
+            width: 100%; /* Ensure the image doesn't exceed its original width */
+            height: auto;
+        }
+        #heatmap-bar {
+            position: fixed;
+            top: 120px; /* Adjust the distance from the bottom as needed */
+            left: 5%; /* Center the bar horizontally */
+            transform: translateX(-50%); /* Center the bar horizontally */
+            width: 40%; /* Set the width of the bar */
+            height: 20px;
+            transform: rotate(90deg); /* Rotate the bar vertically */
+            transform-origin: bottom left; /* Set the rotation origin */
+            background: linear-gradient(to right, red, orange, yellow, #adff2f, green, #007fff, blue, #8a2be2, violet, purple);
+        }
+
+    </style>
+</head>
+<body>
+    <h1>Turbine Condition Assessment</h1>
+    <input type="file" id="fileInput" accept="image/*">
+    <img id="previewImage" src="#" alt="Preview" style="width: 1120px; height:auto; display: none;">
+    <canvas id="imageCanvas" width="1120" height="auto"></canvas>
+    <img id="croppedImage" src="" alt="Cropped Image" style="width: 1120px; height:auto; display: none;">
+    <button onclick="savePoints()">Select Four Points</button>
+    <img id="transImage" src="" alt="Transformed Image" style="width: 1120px; height:auto; display: none;">
+    <button id="transButton">Trans</button>
+<!--    <div id="heatmap-bar" style="display: none;"></div>-->
+    <div id="heatmap-bar"></div>
+
+    <script>
+        var points = [];
+        var imageLoaded = false;
+        var imageWidth, imageHeight;
+        var fileInput = document.getElementById('fileInput');
+        var file = fileInput.files[0];
+        var width = 1120;
+        var crop_dim = 56;
+
+        document.getElementById('fileInput').addEventListener('change', handleFileSelect, false);
+        function handleFileSelect(event) {
+            document.getElementById('imageCanvas').removeEventListener('click', getCursorTilePosition);
+            var file = event.target.files[0];
+            var reader = new FileReader();
+            reader.onload = function(event) {
+                var imageData = event.target.result;
+                var img = document.getElementById('previewImage');
+                img.onload = function() {
+                    imageWidth = this.width;
+                    imageHeight = this.height;
+                    document.getElementById('imageCanvas').width = imageWidth;
+                    document.getElementById('imageCanvas').height = imageHeight;
+                };
+                img.src = event.target.result;
+                img.style.display = 'block';
+                imageLoaded = true;
+            };
+                reader.readAsDataURL(file);
+                if (file) {
+                var formData = new FormData();
+                formData.append('image', file);
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/upload_image', true);
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === 4) {
+                        if (xhr.status === 200) {
+                            console.log('Image uploaded successfully');
+                        } else {
+                            console.error('Error uploading image:', xhr.statusText);
+                        }
+                    }
+                };
+                xhr.send(formData);
+            } else {
+                console.log('No file selected');
+            }
+        };
+        function savePoints() {
+            if (points.length === 4 && imageLoaded) {
+                document.getElementById('imageCanvas').removeEventListener('click', getCursorPosition);
+                document.getElementById('imageCanvas').removeEventListener('click', getCursorTilePosition);
+                var canvas = document.getElementById('imageCanvas');
+                var ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                // Send points to backend via AJAX
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', '/upload', true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === 4 && xhr.status === 200) {
+                        console.log('Points sent successfully');
+                    }
+                };
+                points.push(imageWidth);
+                points.push(imageHeight);
+                xhr.send(JSON.stringify(points));
+                fetch('/get_crop_image') // Send request to backend endpoint
+                    .then(response => {
+                        console.log("Response:", response);
+                        return response.blob();
+                    })
+                    .then(blob => {
+                        const imgUrl = URL.createObjectURL(blob);
+                        console.log("Image URL:", imgUrl);
+                        document.getElementById("previewImage").style.display = 'none'; // Hide preview image
+                        document.getElementById("croppedImage").src = imgUrl; // Update image src
+                        document.getElementById("croppedImage").style.display = 'block'; // Show cropped image
+                        console.log('Crop image sent successfully');
+                    })
+                    .catch(error => {
+                        console.error('Error fetching cropped image:', error);
+                    });
+            } else {
+                console.log('Please select four points and upload an image');
+            }
+        }
+        function getCursorPosition(event) {
+            if (!imageLoaded) {
+                return;
+            }
+            var rect = document.getElementById('imageCanvas').getBoundingClientRect();
+            var x = event.clientX - rect.left;
+            var y = event.clientY - rect.top;
+
+            if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+                points.push({ x: x, y: y });
+                console.log('Point added:', { x: x, y: y });
+
+                var ctx = document.getElementById('imageCanvas').getContext('2d');
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, 2 * Math.PI);
+                ctx.fillStyle = 'red';
+                ctx.fill();
+                ctx.closePath();
+            }
+        }
+        document.getElementById('imageCanvas').addEventListener('click', getCursorPosition, false);
+
+        // Add event listener to the button
+
+        document.getElementById('transButton').addEventListener('click', function() {
+            fetch('/trans') // Send request to backend endpoint
+                .then(response => {
+                    console.log("Response:", response);
+                    return response.blob();
+                })
+                .then(blob => {
+                    const imgUrl = URL.createObjectURL(blob);
+                    console.log("Image URL:", imgUrl);
+                    document.getElementById("croppedImage").style.display = 'none'; // Hide preview image
+                    document.getElementById("transImage").src = imgUrl; // Update image src
+                    document.getElementById("transImage").style.display = 'block'; // Show cropped image
+                    var transImage = document.getElementById('transImage');
+                    // Set an onload event handler to get the width and height after the image is loaded
+                    transImage.onload = function() {
+                        // Get the width and height of the image
+                        var width = transImage.width;
+                        var height = transImage.height;
+
+                        // Set the width and height of the canvas
+                        var imageCanvas = document.getElementById('imageCanvas');
+                        imageCanvas.width = width;
+                        imageCanvas.height = height;
+                    };
+                    console.log('Transform image sent successfully');
+                    document.getElementById('imageCanvas').addEventListener('click', getCursorTilePosition, false);
+                    document.getElementById('imageCanvas').addEventListener('click', getSimTilePosition, false);
+
+
+
+                })
+                .catch(error => {
+                    console.error('Error fetching cropped image:', error);
+                });
+
+        });
+        function getCursorTilePosition(event) {
+            var rect = document.getElementById('imageCanvas').getBoundingClientRect();
+            var x = event.clientX - rect.left;
+            var y = event.clientY - rect.top;
+
+            if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+                console.log('Point in tile selected:', { x: x, y: y });
+                var x_coord = crop_dim * Math.floor(x/crop_dim)
+                var y_coord = crop_dim * Math.floor(y/crop_dim)
+                var ctx = document.getElementById('imageCanvas').getContext('2d');
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x_coord, y_coord, crop_dim, crop_dim);
+            }
+            var tilePt = [];
+            tilePt.push(x);
+            tilePt.push(y);
+            // Send tile points to backend via AJAX
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/uploadTile', true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    console.log('Tile Point sent successfully');
+                }
+            };
+            xhr.send(JSON.stringify(tilePt));
+        };
+        var numTileWidth = width/crop_dim;
+        function getSimTilePosition() {
+            fetch('/simTile')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Response:', data);
+                    // Access num_lst from the response
+                    const heatmap_d = data.heatmap_d;
+                    console.log('heatmap_d:', heatmap_d);
+                    var heatmapBar = document.getElementById('heatmap-bar');
+                    heatmapBar.style.display = 'block';
+                    for (let thr in heatmap_d) {
+                        let lst = heatmap_d[thr];
+                        for (let num of lst) {
+                            if (num % numTileWidth === 0) {
+                                var x_left = (numTileWidth - 1) * crop_dim;
+                            } else {
+                                var x_left = (num % numTileWidth - 1) * crop_dim;
+                            }
+                            var y_top = Math.floor(num / numTileWidth) * crop_dim;
+                            var ctx = document.getElementById('imageCanvas').getContext('2d');
+                            if (thr === '90') {
+                                ctx.strokeStyle = 'rgb(255, 0, 0)';
+                            } else if (thr === '80') {
+                                ctx.strokeStyle = 'rgb(255, 128, 0)';
+                            } else if (thr === '70') {
+                                ctx.strokeStyle = 'rgb(255, 255, 0)';
+                            } else if (thr === '60') {
+                                ctx.strokeStyle = 'rgb(128, 255, 0)';
+                            } else if (thr === '50') {
+                                ctx.strokeStyle = 'rgb(0, 255, 0)';
+                            } else if (thr === '40') {
+                                ctx.strokeStyle = 'rgb(0, 255, 128)';
+                            } else if (thr === '30') {
+                                ctx.strokeStyle = 'rgb(0, 255, 255)';
+                            } else if (thr === '20') {
+                                ctx.strokeStyle = 'rgb(0, 128, 255)';
+                            } else if (thr === '10') {
+                                ctx.strokeStyle = 'rgb(128, 0, 255)';
+                            } else {
+                                ctx.strokeStyle = 'rgb(128, 0, 128)';
+                            }
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(x_left, y_top, crop_dim, crop_dim);
+                        }
+                    }
+                });
+        }
+
+
+    </script>
+</body>
+</html>
+
+
